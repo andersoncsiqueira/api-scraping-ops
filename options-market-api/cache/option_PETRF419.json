@@ -1,0 +1,22 @@
+{
+  "symbol": "PETRF419",
+  "underlying": "PETR4",
+  "type": "CALL",
+  "seriesLetter": "F",
+  "codeNumber": "419",
+  "expiration": "2026-06-19",
+  "expirationEstimated": false,
+  "strike": 40.86,
+  "quote": {
+    "symbol": "PETRF419",
+    "lastPrice": 1.36,
+    "previousClose": null,
+    "change": null,
+    "changePercent": null,
+    "volume": 443202,
+    "updatedAt": "2026-06-10T00:00:00.000Z"
+  },
+  "source": "Opções.Net",
+  "updatedAt": "2026-06-11T13:05:20.098Z",
+  "warnings": []
+}

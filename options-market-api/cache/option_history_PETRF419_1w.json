@@ -1,0 +1,51 @@
+{
+  "symbol": "PETRF419",
+  "underlying": "PETR4",
+  "range": "1w",
+  "source": "Opções.Net",
+  "cached": false,
+  "updatedAt": "2026-06-11T13:26:09.838Z",
+  "candles": [
+    {
+      "date": "2026-06-05",
+      "open": 1.37,
+      "high": 1.43,
+      "low": 0.99,
+      "close": 1.05,
+      "volume": 2469640,
+      "trades": 629,
+      "volumeFinancial": 2469640
+    },
+    {
+      "date": "2026-06-08",
+      "open": 1.3,
+      "high": 1.3,
+      "low": 1.06,
+      "close": 1.12,
+      "volume": 641575,
+      "trades": 222,
+      "volumeFinancial": 641575
+    },
+    {
+      "date": "2026-06-09",
+      "open": 1.06,
+      "high": 1.2,
+      "low": 0.91,
+      "close": 1,
+      "volume": 516525,
+      "trades": 235,
+      "volumeFinancial": 516525
+    },
+    {
+      "date": "2026-06-10",
+      "open": 1,
+      "high": 1.6,
+      "low": 0.97,
+      "close": 1.36,
+      "volume": 443202,
+      "trades": 220,
+      "volumeFinancial": 443202
+    }
+  ],
+  "warnings": []
+}

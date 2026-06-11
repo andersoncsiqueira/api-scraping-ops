@@ -3,6 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 
 import marketDataRoutes from "./routes/marketDataRoutes";
+import optionsRoutes from "./routes/optionsRoutes";
+import optionsChainRoutes from "./routes/optionsChainRoutes";
 
 dotenv.config();
 
@@ -22,6 +24,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/market-data", marketDataRoutes);
+app.use("/api/options", optionsRoutes);
+app.use("/api/options-chain", optionsChainRoutes);
 
 app.listen(PORT, () => {
   console.log(`Options Market API rodando na porta ${PORT}`);
