@@ -1,0 +1,49 @@
+{
+  "symbol": "PETR4",
+  "range": "1w",
+  "source": "Yahoo Finance",
+  "cached": false,
+  "updatedAt": "2026-06-11T11:00:27.093Z",
+  "candles": [
+    {
+      "date": "2026-06-03",
+      "open": 41.65,
+      "high": 41.87,
+      "low": 41.25,
+      "close": 41.25,
+      "volume": 42895100
+    },
+    {
+      "date": "2026-06-05",
+      "open": 41.03,
+      "high": 41.43,
+      "low": 40.65,
+      "close": 40.89,
+      "volume": 34730900
+    },
+    {
+      "date": "2026-06-08",
+      "open": 41.2,
+      "high": 41.32,
+      "low": 40.83,
+      "close": 41.22,
+      "volume": 34043600
+    },
+    {
+      "date": "2026-06-09",
+      "open": 40.88,
+      "high": 41.37,
+      "low": 40.7,
+      "close": 41.17,
+      "volume": 56680400
+    },
+    {
+      "date": "2026-06-10",
+      "open": 41.21,
+      "high": 42.04,
+      "low": 41.01,
+      "close": 41.65,
+      "volume": 44953200
+    }
+  ]
+}
