@@ -7,6 +7,8 @@ import type {
   ParsedOptionCode,
 } from "./optionTypes";
 
+const FETCH_TIMEOUT_MS = Number(process.env.OPTIONS_SCRAPER_TIMEOUT_MS ?? 8000);
+
 type ScrapedOptionData = {
   symbol: string;
   underlying: string;
@@ -53,6 +55,24 @@ function brDateToIso(value: string | undefined | null): string | null {
   const [, day, month, year] = match;
 
   return `${year}-${month}-${day}`;
+}
+
+function normalizeColumnName(value: string): string {
+  return normalizeText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
+}
+
+function findColumnIndex(headers: string[], aliases: string[]): number {
+  return headers.findIndex((header) =>
+    aliases.some((alias) => header.includes(alias))
+  );
+}
+
+function numberAt(cells: string[], index: number): number | null {
+  return index >= 0 ? brNumberToFloat(cells[index]) : null;
 }
 
 function detectOptionType(text: string): OptionType | null {
@@ -139,6 +159,7 @@ function extractLatestQuoteFromText(
 
   const dateIso = brDateToIso(latest[1]);
   const lastPrice = brNumberToFloat(latest[5]);
+  const trades = brNumberToFloat(latest[7]);
   const volumeFinancial = brNumberToFloat(latest[8]);
 
   if (lastPrice === null) {
@@ -151,8 +172,12 @@ function extractLatestQuoteFromText(
     previousClose: null,
     change: null,
     changePercent: null,
-    volume:
+    volume: null,
+    financialVolume:
       volumeFinancial !== null ? Math.round(volumeFinancial) : null,
+    trades: trades !== null ? Math.round(trades) : null,
+    bid: null,
+    ask: null,
     updatedAt: dateIso
       ? `${dateIso}T00:00:00.000Z`
       : new Date().toISOString(),
@@ -169,6 +194,7 @@ function extractLatestQuoteFromTables(
     if (bestQuote) return;
 
     const rows = $(table).find("tr");
+    let normalizedHeaders: string[] = [];
 
     rows.each((_rowIndex, row) => {
       if (bestQuote) return;
@@ -181,6 +207,17 @@ function extractLatestQuoteFromTables(
 
       if (cells.length < 6) return;
 
+      const rowHeaders = cells.map(normalizeColumnName);
+      if (
+        rowHeaders.some((cell) => cell === "data") &&
+        rowHeaders.some((cell) =>
+          ["ult", "ultimo", "preco", "fechamento"].includes(cell)
+        )
+      ) {
+        normalizedHeaders = rowHeaders;
+        return;
+      }
+
       const maybeDate = cells.find((cell) =>
         /\d{2}\/\d{2}\/\d{4}/.test(cell)
       );
@@ -189,32 +226,71 @@ function extractLatestQuoteFromTables(
 
       const dateIso = brDateToIso(maybeDate);
 
-      /**
-       * Em muitas páginas do Opções.Net:
-       * Data | Min | Pri | Med | Ult | Max | Negócios | Vol.Fin
-       */
+      const headers =
+        normalizedHeaders.length === cells.length ? normalizedHeaders : [];
+
+      const lastPrice =
+        numberAt(cells, findColumnIndex(headers, ["ult", "ultimo"])) ??
+        numberAt(cells, findColumnIndex(headers, ["fechamento", "preco"])) ??
+        null;
+
+      const bid = numberAt(
+        cells,
+        findColumnIndex(headers, ["bid", "compra", "ofertacompra"])
+      );
+
+      const ask = numberAt(
+        cells,
+        findColumnIndex(headers, ["ask", "venda", "ofertavenda"])
+      );
+
+      const trades = numberAt(
+        cells,
+        findColumnIndex(headers, ["neg", "negocios", "nneg"])
+      );
+
+      const volume =
+        numberAt(cells, findColumnIndex(headers, ["volumeqtd", "volqtd"])) ??
+        null;
+
+      const volumeFinancial =
+        numberAt(cells, findColumnIndex(headers, ["volfin", "financeiro"])) ??
+        null;
+
       const numericCells = cells
         .filter((cell) => /^[\d.,-]+$/.test(cell))
         .map((cell) => brNumberToFloat(cell))
         .filter((value): value is number => value !== null);
 
-      if (numericCells.length < 5) return;
+      const fallbackLastPrice = numericCells[3] ?? null;
+      const fallbackTrades = numericCells[5] ?? null;
+      const fallbackFinancialVolume = numericCells[6] ?? null;
 
-      const lastPrice = numericCells[3] ?? null;
-      const volumeFinancial = numericCells[6] ?? null;
+      const resolvedLastPrice = lastPrice ?? fallbackLastPrice;
 
-      if (lastPrice === null) return;
+      if (resolvedLastPrice === null) return;
 
       bestQuote = {
         symbol: optionSymbol,
-        lastPrice: Number(lastPrice.toFixed(2)),
+        lastPrice: Number(resolvedLastPrice.toFixed(2)),
         previousClose: null,
         change: null,
         changePercent: null,
-        volume:
-          volumeFinancial !== null && volumeFinancial !== undefined
+        volume: volume !== null ? Math.round(volume) : null,
+        financialVolume:
+          volumeFinancial !== null
             ? Math.round(volumeFinancial)
-            : null,
+            : fallbackFinancialVolume !== null
+              ? Math.round(fallbackFinancialVolume)
+              : null,
+        trades:
+          trades !== null
+            ? Math.round(trades)
+            : fallbackTrades !== null
+              ? Math.round(fallbackTrades)
+              : null,
+        bid,
+        ask,
         updatedAt: dateIso
           ? `${dateIso}T00:00:00.000Z`
           : new Date().toISOString(),
@@ -233,7 +309,11 @@ export async function scrapeOptionFromOpcoesNet(
 
   const url = `https://opcoes.net.br/${encodeURIComponent(cleanSymbol)}`;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
   const response = await fetch(url, {
+    signal: controller.signal,
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36",
@@ -241,6 +321,8 @@ export async function scrapeOptionFromOpcoesNet(
         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
     },
+  }).finally(() => {
+    clearTimeout(timeout);
   });
 
   if (!response.ok) {
