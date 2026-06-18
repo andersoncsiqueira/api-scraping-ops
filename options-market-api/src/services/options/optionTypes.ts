@@ -27,6 +27,10 @@ export type OptionQuote = {
   change: number | null;
   changePercent: number | null;
   volume: number | null;
+  financialVolume: number | null;
+  trades: number | null;
+  bid: number | null;
+  ask: number | null;
   updatedAt: string;
 };
 

@@ -12,6 +12,8 @@ export type OptionChainItem = {
   bid: number | null;
   ask: number | null;
   volume: number | null;
+  financialVolume: number | null;
+  trades: number | null;
   openInterest: number | null;
   updatedAt: string;
 };
