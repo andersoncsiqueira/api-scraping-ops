@@ -11,6 +11,36 @@ import {
   readJsonCache,
   writeJsonCache,
 } from "./cacheService";
+import { fetchBrapiJson } from "./brapiService";
+
+type BrapiStockQuoteResponse = {
+  results?: Array<{
+    symbol?: string;
+    data?: {
+      regularMarketPrice?: number | null;
+      regularMarketPreviousClose?: number | null;
+      regularMarketChange?: number | null;
+      regularMarketChangePercent?: number | null;
+      regularMarketTime?: string | null;
+    };
+  }>;
+};
+
+type BrapiStockHistoryResponse = {
+  results?: Array<{
+    symbol?: string;
+    data?: {
+      historicalDataPrice?: Array<{
+        date?: number;
+        open?: number | null;
+        high?: number | null;
+        low?: number | null;
+        close?: number | null;
+        volume?: number | null;
+      }>;
+    };
+  }>;
+};
 
 function normalizeSymbol(symbol: string): string {
   const cleanSymbol = symbol.trim().toUpperCase();
@@ -38,6 +68,133 @@ function getYahooInterval(range: HistoryRange): string {
 
 function toAppSymbol(symbol: string): string {
   return symbol.replace(".SA", "");
+}
+
+function normalizeBrapiSymbol(symbol: string): string {
+  return toAppSymbol(normalizeSymbol(symbol));
+}
+
+function getBrapiRange(range: HistoryRange): string {
+  if (range === "1w") return "7d";
+  if (range === "1m") return "1mo";
+
+  return "1y";
+}
+
+function parseBrapiHistoryResponse(data: BrapiStockHistoryResponse): {
+  symbol: string;
+  candles: MarketCandle[];
+} | null {
+  const result = data.results?.[0];
+  const prices = result?.data?.historicalDataPrice ?? [];
+  const candles = prices
+    .map((item) => {
+      const { date, open, high, low, close, volume } = item;
+
+      if (
+        typeof date !== "number" ||
+        open === null ||
+        open === undefined ||
+        high === null ||
+        high === undefined ||
+        low === null ||
+        low === undefined ||
+        close === null ||
+        close === undefined ||
+        volume === null ||
+        volume === undefined
+      ) {
+        return null;
+      }
+
+      return {
+        date: new Date(date * 1000).toISOString().slice(0, 10),
+        open: Number(open.toFixed(2)),
+        high: Number(high.toFixed(2)),
+        low: Number(low.toFixed(2)),
+        close: Number(close.toFixed(2)),
+        volume: Math.round(volume),
+      };
+    })
+    .filter((item): item is MarketCandle => item !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (!result?.symbol || candles.length === 0) {
+    return null;
+  }
+
+  return {
+    symbol: result.symbol,
+    candles,
+  };
+}
+
+async function fetchBrapiHistory(
+  symbol: string,
+  range: HistoryRange
+): Promise<HistoryResponse | null> {
+  const appSymbol = normalizeBrapiSymbol(symbol);
+  const data = await fetchBrapiJson<BrapiStockHistoryResponse>(
+    "/stocks/historical",
+    {
+      symbols: appSymbol,
+      range: getBrapiRange(range),
+      interval: "1d",
+      sortOrder: "asc",
+    }
+  );
+
+  const parsed = parseBrapiHistoryResponse(data);
+
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    symbol: parsed.symbol,
+    range,
+    source: "brapi.dev",
+    cached: false,
+    updatedAt: new Date().toISOString(),
+    candles: parsed.candles,
+  };
+}
+
+async function fetchBrapiQuote(symbol: string): Promise<QuoteResponse | null> {
+  const appSymbol = normalizeBrapiSymbol(symbol);
+  const data = await fetchBrapiJson<BrapiStockQuoteResponse>("/stocks/quote", {
+    symbols: appSymbol,
+  });
+
+  const result = data.results?.[0];
+  const quoteData = result?.data;
+  const price = quoteData?.regularMarketPrice;
+
+  if (!result?.symbol || price === null || price === undefined) {
+    return null;
+  }
+
+  const previousClose = quoteData?.regularMarketPreviousClose ?? price;
+  const change = quoteData?.regularMarketChange ?? price - previousClose;
+  const changePercent =
+    quoteData?.regularMarketChangePercent ??
+    (previousClose ? (change / previousClose) * 100 : 0);
+  const updatedAt = quoteData?.regularMarketTime ?? new Date().toISOString();
+
+  return {
+    symbol: result.symbol,
+    source: "brapi.dev",
+    cached: false,
+    updatedAt,
+    quote: {
+      symbol: result.symbol,
+      price: Number(price.toFixed(2)),
+      previousClose: Number(previousClose.toFixed(2)),
+      change: Number(change.toFixed(2)),
+      changePercent: Number(changePercent.toFixed(2)),
+      updatedAt,
+    },
+  };
 }
 
 function parseYahooChartResponse(data: any): MarketCandle[] {
@@ -112,6 +269,18 @@ export async function getYahooHistory(
     };
   }
 
+  try {
+    const brapiHistory = await fetchBrapiHistory(appSymbol, range);
+
+    if (brapiHistory) {
+      await writeJsonCache(cacheFileName, brapiHistory);
+
+      return brapiHistory;
+    }
+  } catch (error) {
+    console.error("Erro ao buscar histórico na brapi.dev:", error);
+  }
+
   const yahooRange = getYahooRange(range);
   const yahooInterval = getYahooInterval(range);
 
@@ -153,6 +322,16 @@ export async function getYahooHistory(
 }
 
 export async function getYahooQuote(symbol: string): Promise<QuoteResponse> {
+  try {
+    const brapiQuote = await fetchBrapiQuote(symbol);
+
+    if (brapiQuote) {
+      return brapiQuote;
+    }
+  } catch (error) {
+    console.error("Erro ao buscar cotação na brapi.dev:", error);
+  }
+
   const history = await getYahooHistory(symbol, "1w");
 
   const candles = history.candles;

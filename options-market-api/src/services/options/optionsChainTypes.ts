@@ -1,6 +1,11 @@
 import type { OptionType } from "./optionTypes";
 
-export type OptionChainSource = "manual" | "scraper" | "cache" | "Opções.Net";
+export type OptionChainSource =
+  | "manual"
+  | "scraper"
+  | "cache"
+  | "Opções.Net"
+  | "brapi.dev";
 
 export type OptionChainItem = {
   symbol: string;
