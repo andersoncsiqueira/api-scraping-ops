@@ -12,6 +12,7 @@ import type {
   OptionChainItem,
   OptionsChainResponse,
 } from "./optionsChainTypes";
+import type { OptionExerciseStyle } from "./optionTypes";
 
 type OptionKind = "CALL" | "PUT";
 type BrapiOptionSide = "call" | "put";
@@ -142,6 +143,10 @@ function isPossibleStrike(value: number | null): value is number {
   return value !== null && value > 0 && value < 1_000_000;
 }
 
+function estimateExerciseStyle(type: OptionKind): OptionExerciseStyle {
+  return type === "CALL" ? "AMERICAN" : "EUROPEAN";
+}
+
 function getOptionSymbolPattern(underlying: string): RegExp {
   const root = getUnderlyingRoot(underlying);
 
@@ -208,6 +213,8 @@ function buildItem(params: {
     underlying: params.underlying,
     type: params.type,
     expiration: params.expiration,
+    exerciseStyle: estimateExerciseStyle(params.type),
+    exerciseStyleEstimated: true,
     strike: params.strike,
     lastPrice: null,
     bid: null,
@@ -745,6 +752,17 @@ function hasAnyCachedOptions(
   return Boolean(
     cached && Array.isArray(cached.options) && cached.options.length > 0
   );
+function hydrateCachedChain(
+  chain: OptionsChainResponse
+): OptionsChainResponse {
+  return {
+    ...chain,
+    options: chain.options.map((option) => ({
+      ...option,
+      exerciseStyle: option.exerciseStyle ?? estimateExerciseStyle(option.type),
+      exerciseStyleEstimated: option.exerciseStyleEstimated ?? true,
+    })),
+  };
 }
 
 async function resolveOptionsChain(
@@ -770,7 +788,7 @@ async function resolveOptionsChain(
     isCacheFresh(cached.updatedAt, CACHE_MINUTES)
   ) {
     return {
-      ...cached,
+      ...hydrateCachedChain(cached),
       source: "cache" as OptionsChainResponse["source"],
       cached: true,
     };
@@ -823,7 +841,7 @@ async function resolveOptionsChain(
     */
     if (isUsefulCache(cached) || hasAnyCachedOptions(cached)) {
       return {
-        ...cached,
+        ...hydrateCachedChain(cached),
         source: "cache" as OptionsChainResponse["source"],
         cached: true,
       };

@@ -166,20 +166,36 @@ async function resolveOptionBySymbol(
   const cacheFileName = `option_${cleanSymbol}.json`;
 
   const cached = await readJsonCache<OptionLookupResponse>(cacheFileName);
+  const parsed = parseBrazilianOptionCode(cleanSymbol);
 
   if (cached && isCacheFresh(cached.updatedAt, OPTION_CACHE_MINUTES)) {
     return {
       ...cached,
+      exerciseStyle: cached.exerciseStyle ?? parsed.exerciseStyle,
+      exerciseStyleEstimated:
+        cached.exerciseStyleEstimated ?? parsed.exerciseStyleEstimated,
       warnings: [...cached.warnings, "Resposta carregada do cache local."],
     };
   }
-
-  const parsed = parseBrazilianOptionCode(cleanSymbol);
 
   const warnings: string[] = [];
 
   try {
     const scraped = await scrapeOptionFromOpcoesNet(cleanSymbol, parsed);
+
+    if (scraped && (scraped.strike !== null || scraped.quote !== null)) {
+      const result = mergeScrapedOptionWithLookup(parsed, scraped);
+
+      await writeJsonCache(cacheFileName, result);
+
+      return result;
+    }
+
+    warnings.push("Opções.Net foi consultado, mas retornou dados incompletos.");
+  } catch (error) {
+    console.error("Erro no scraper Opções.Net:", error);
+    warnings.push("Erro ao tentar buscar dados no Opções.Net.");
+  }
 
     if (scraped && (scraped.strike !== null || scraped.quote !== null)) {
       const result = mergeScrapedOptionWithLookup(parsed, scraped);
@@ -265,6 +281,9 @@ async function resolveOptionBySymbol(
     codeNumber: parsed.codeNumber,
     expiration: optionFromChain?.expiration ?? parsed.estimatedExpiration,
     expirationEstimated: optionFromChain ? false : parsed.expirationEstimated,
+    exerciseStyle: optionFromChain?.exerciseStyle ?? parsed.exerciseStyle,
+    exerciseStyleEstimated:
+      optionFromChain?.exerciseStyleEstimated ?? parsed.exerciseStyleEstimated,
     strike: optionFromChain?.strike ?? null,
     quote,
     source: optionFromChain ? "brapi.dev" : quote ? "Yahoo Finance" : "parser",

@@ -1,5 +1,7 @@
 export type OptionType = "CALL" | "PUT";
 
+export type OptionExerciseStyle = "AMERICAN" | "EUROPEAN" | "UNKNOWN";
+
 export type OptionSource =
   | "parser"
   | "Yahoo Finance"
@@ -19,6 +21,8 @@ export type ParsedOptionCode = {
   expirationMonthName: string;
   estimatedExpiration: string;
   expirationEstimated: boolean;
+  exerciseStyle: OptionExerciseStyle;
+  exerciseStyleEstimated: boolean;
 };
 
 export type OptionQuote = {
@@ -43,6 +47,8 @@ export type OptionLookupResponse = {
   codeNumber: string;
   expiration: string;
   expirationEstimated: boolean;
+  exerciseStyle: OptionExerciseStyle;
+  exerciseStyleEstimated: boolean;
   strike: number | null;
   quote: OptionQuote | null;
   source: OptionSource;
