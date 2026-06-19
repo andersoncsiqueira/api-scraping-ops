@@ -6,6 +6,7 @@ import {
   readJsonCache,
   writeJsonCache,
 } from "../cacheService";
+import { fetchBrapiJson } from "../brapiService";
 
 import type {
   OptionChainItem,
@@ -14,11 +15,39 @@ import type {
 import type { OptionExerciseStyle } from "./optionTypes";
 
 type OptionKind = "CALL" | "PUT";
+type BrapiOptionSide = "call" | "put";
+
+type BrapiOptionsExpirationsResponse = {
+  expirations?: string[];
+};
+
+type BrapiOptionsChainResponse = {
+  underlying?: string;
+  expirationDate?: string;
+  date?: string | number;
+  series?: Array<{
+    symbol?: string;
+    underlyingSymbol?: string;
+    side?: BrapiOptionSide;
+    strike?: number | null;
+    expirationDate?: string;
+    close?: number | null;
+    bid?: number | null;
+    ask?: number | null;
+    volume?: number | null;
+    financialVolume?: number | null;
+    trades?: number | null;
+    date?: string | number;
+  }>;
+};
 
 const SOURCE_NAME = "Opções.Net";
 const CACHE_MINUTES = Number(process.env.OPTIONS_CHAIN_CACHE_MINUTES ?? 5);
 const FETCH_TIMEOUT_MS = Number(process.env.OPTIONS_SCRAPER_TIMEOUT_MS ?? 8000);
 const MINIMUM_VALID_CHAIN_SIZE = 10;
+const BRAPI_OPTIONS_MAX_EXPIRATIONS = Number(
+  process.env.BRAPI_OPTIONS_MAX_EXPIRATIONS ?? 12
+);
 const pendingChainLookups = new Map<string, Promise<OptionsChainResponse>>();
 
 function normalizeUnderlying(underlying: string): string {
@@ -76,6 +105,26 @@ function parseBrazilianDate(value: string): string | null {
   const [, day, month, year] = match;
 
   return `${year}-${month}-${day}`;
+}
+
+function brapiDateToIso(value: string | number | undefined): string {
+  if (typeof value === "number") {
+    return new Date(value * 1000).toISOString();
+  }
+
+  if (typeof value === "string" && value) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return `${value}T00:00:00.000Z`;
+    }
+
+    const parsed = new Date(value);
+
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return new Date().toISOString();
 }
 
 function extractDates(value: string): string[] {
@@ -619,6 +668,26 @@ async function resolveOptionsChain(
       source: "cache" as OptionsChainResponse["source"],
       cached: true,
     };
+  }
+
+  try {
+    const brapiOptions = await scrapeBrapiOptionsChain(cleanUnderlying);
+
+    if (brapiOptions.length > 0) {
+      const result: OptionsChainResponse = {
+        underlying: cleanUnderlying,
+        source: "brapi.dev" as OptionsChainResponse["source"],
+        cached: false,
+        updatedAt: new Date().toISOString(),
+        options: brapiOptions,
+      };
+
+      await writeJsonCache(cacheFileName, result);
+
+      return result;
+    }
+  } catch (error) {
+    console.error("Erro ao buscar cadeia de opções na brapi.dev:", error);
   }
 
   try {

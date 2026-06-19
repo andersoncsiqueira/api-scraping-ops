@@ -6,6 +6,7 @@ export type OptionSource =
   | "parser"
   | "Yahoo Finance"
   | "Opções.Net"
+  | "brapi.dev"
   | "manual"
   | "unknown";
 

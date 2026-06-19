@@ -197,10 +197,28 @@ async function resolveOptionBySymbol(
     warnings.push("Erro ao tentar buscar dados no Opções.Net.");
   }
 
-  const optionFromChain = await findOptionInChain(
-    parsed.symbol,
-    parsed.underlying
-  );
+    if (scraped && (scraped.strike !== null || scraped.quote !== null)) {
+      const result = mergeScrapedOptionWithLookup(parsed, scraped);
+
+      await writeJsonCache(cacheFileName, result);
+
+      return result;
+    }
+
+    warnings.push("Opções.Net foi consultado, mas retornou dados incompletos.");
+  } catch (error) {
+    console.error("Erro no scraper Opções.Net:", error);
+    warnings.push("Erro ao tentar buscar dados no Opções.Net.");
+  }
+
+  let optionFromChain = null;
+
+  try {
+    optionFromChain = await findOptionInChain(parsed.symbol, parsed.underlying);
+  } catch (error) {
+    console.error("Erro ao buscar opção na cadeia:", error);
+    warnings.push("Erro ao tentar buscar a opção na cadeia de opções.");
+  }
 
   let quote: OptionQuote | null = null;
 
@@ -268,7 +286,7 @@ async function resolveOptionBySymbol(
       optionFromChain?.exerciseStyleEstimated ?? parsed.exerciseStyleEstimated,
     strike: optionFromChain?.strike ?? null,
     quote,
-    source: optionFromChain ? "manual" : quote ? "Yahoo Finance" : "parser",
+    source: optionFromChain ? "brapi.dev" : quote ? "Yahoo Finance" : "parser",
     updatedAt: new Date().toISOString(),
     warnings,
   };
