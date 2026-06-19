@@ -288,37 +288,50 @@ export async function getYahooHistory(
     yahooSymbol
   )}?range=${yahooRange}&interval=${yahooInterval}`;
 
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      Accept: "application/json",
-    },
-  });
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "application/json",
+      },
+    });
 
-  if (!response.ok) {
-    throw new Error(`Erro ao buscar histórico: ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`Erro ao buscar histórico: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    const candles = parseYahooChartResponse(data);
+
+    if (candles.length === 0) {
+      throw new Error("Nenhum candle encontrado para o ativo informado.");
+    }
+
+    const result: HistoryResponse = {
+      symbol: appSymbol,
+      range,
+      source: "Yahoo Finance",
+      cached: false,
+      updatedAt: new Date().toISOString(),
+      candles,
+    };
+
+    await writeJsonCache(cacheFileName, result);
+
+    return result;
+  } catch (error) {
+    if (cached && cached.candles.length > 0) {
+      console.error("Erro ao buscar histórico no Yahoo Finance:", error);
+
+      return {
+        ...cached,
+        cached: true,
+      };
+    }
+
+    throw error;
   }
-
-  const data = await response.json();
-
-  const candles = parseYahooChartResponse(data);
-
-  if (candles.length === 0) {
-    throw new Error("Nenhum candle encontrado para o ativo informado.");
-  }
-
-  const result: HistoryResponse = {
-    symbol: appSymbol,
-    range,
-    source: "Yahoo Finance",
-    cached: false,
-    updatedAt: new Date().toISOString(),
-    candles,
-  };
-
-  await writeJsonCache(cacheFileName, result);
-
-  return result;
 }
 
 export async function getYahooQuote(symbol: string): Promise<QuoteResponse> {

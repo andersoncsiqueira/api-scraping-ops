@@ -527,6 +527,124 @@ function parseMatrixPage(params: {
   return parseMatrixTextFallback(params);
 }
 
+function parseBrapiOptionItem(
+  item: NonNullable<BrapiOptionsChainResponse["series"]>[number],
+  underlying: string,
+  fallbackExpiration: string | undefined,
+  fallbackDate: string | number | undefined
+): OptionChainItem | null {
+  const symbol = item.symbol?.trim().toUpperCase();
+  const type = item.side === "call" ? "CALL" : item.side === "put" ? "PUT" : null;
+  const strike = item.strike;
+  const expiration = item.expirationDate ?? fallbackExpiration;
+
+  if (
+    !symbol ||
+    !type ||
+    strike === null ||
+    strike === undefined ||
+    !expiration
+  ) {
+    return null;
+  }
+
+  return {
+    symbol,
+    underlying: item.underlyingSymbol?.trim().toUpperCase() ?? underlying,
+    type,
+    expiration,
+    strike,
+    lastPrice: item.close ?? null,
+    bid: item.bid ?? null,
+    ask: item.ask ?? null,
+    volume: item.volume !== null && item.volume !== undefined
+      ? Math.round(item.volume)
+      : null,
+    financialVolume:
+      item.financialVolume !== null && item.financialVolume !== undefined
+        ? Math.round(item.financialVolume)
+        : null,
+    trades: item.trades !== null && item.trades !== undefined
+      ? Math.round(item.trades)
+      : null,
+    openInterest: null,
+    updatedAt: brapiDateToIso(item.date ?? fallbackDate),
+  };
+}
+
+async function fetchBrapiOptionsChainForExpiration(
+  underlying: string,
+  expirationDate: string
+): Promise<OptionChainItem[]> {
+  const response = await fetchBrapiJson<BrapiOptionsChainResponse>(
+    "/options/chain",
+    {
+      underlying,
+      expirationDate,
+    }
+  );
+
+  return (response.series ?? [])
+    .map((item) =>
+      parseBrapiOptionItem(
+        item,
+        underlying,
+        response.expirationDate ?? expirationDate,
+        response.date
+      )
+    )
+    .filter((item): item is OptionChainItem => item !== null);
+}
+
+async function scrapeBrapiOptionsChain(
+  underlying: string
+): Promise<OptionChainItem[]> {
+  const cleanUnderlying = normalizeUnderlying(underlying);
+  const expirationsResponse =
+    await fetchBrapiJson<BrapiOptionsExpirationsResponse>(
+      "/options/expirations",
+      {
+        underlying: cleanUnderlying,
+      }
+    );
+
+  const expirations = (expirationsResponse.expirations ?? [])
+    .filter((expiration) => /^\d{4}-\d{2}-\d{2}$/.test(expiration))
+    .slice(0, BRAPI_OPTIONS_MAX_EXPIRATIONS);
+
+  if (expirations.length === 0) {
+    return [];
+  }
+
+  const chainByExpiration = await Promise.all(
+    expirations.map((expiration) =>
+      fetchBrapiOptionsChainForExpiration(cleanUnderlying, expiration)
+    )
+  );
+
+  const uniqueOptions = new Map<string, OptionChainItem>();
+
+  for (const option of chainByExpiration.flat()) {
+    uniqueOptions.set(option.symbol, option);
+  }
+
+  return Array.from(uniqueOptions.values()).sort((a, b) => {
+    const expirationCompare = a.expiration.localeCompare(b.expiration);
+
+    if (expirationCompare !== 0) {
+      return expirationCompare;
+    }
+
+    const strikeCompare = a.strike - b.strike;
+
+    if (strikeCompare !== 0) {
+      return strikeCompare;
+    }
+
+    return a.symbol.localeCompare(b.symbol);
+  });
+}
+
 async function fetchHtml(url: string): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -628,6 +746,12 @@ function isUsefulCache(
   );
 }
 
+function hasAnyCachedOptions(
+  cached: OptionsChainResponse | null
+): cached is OptionsChainResponse {
+  return Boolean(
+    cached && Array.isArray(cached.options) && cached.options.length > 0
+  );
 function hydrateCachedChain(
   chain: OptionsChainResponse
 ): OptionsChainResponse {
@@ -715,7 +839,7 @@ async function resolveOptionsChain(
       Se o site estiver temporariamente indisponível, devolve o último cache
       completo, mesmo vencido. Isso evita derrubar a calculadora.
     */
-    if (isUsefulCache(cached)) {
+    if (isUsefulCache(cached) || hasAnyCachedOptions(cached)) {
       return {
         ...hydrateCachedChain(cached),
         source: "cache" as OptionsChainResponse["source"],
