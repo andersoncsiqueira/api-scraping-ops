@@ -1,4 +1,8 @@
-import type { OptionType, ParsedOptionCode } from "./optionTypes";
+import type {
+  OptionExerciseStyle,
+  OptionType,
+  ParsedOptionCode,
+} from "./optionTypes";
 
 const CALL_MONTHS: Record<string, number> = {
   A: 1,
@@ -71,6 +75,15 @@ function getOptionType(seriesLetter: string): OptionType {
   if (PUT_MONTHS[seriesLetter]) return "PUT";
 
   throw new Error(`Letra de série inválida: ${seriesLetter}`);
+}
+
+function estimateExerciseStyle(type: OptionType): OptionExerciseStyle {
+  /*
+    No mercado brasileiro, a convenção mais comum para opções de ações é:
+    CALL com exercício americano e PUT com exercício europeu. O scraper do
+    Opções.Net substitui esta estimativa quando a página informar o estilo.
+  */
+  return type === "CALL" ? "AMERICAN" : "EUROPEAN";
 }
 
 function getExpirationMonth(seriesLetter: string): number {
@@ -163,5 +176,7 @@ export function parseBrazilianOptionCode(symbol: string): ParsedOptionCode {
     expirationMonthName: MONTH_NAMES[expirationMonth],
     estimatedExpiration: estimateExpirationDate(expirationMonth),
     expirationEstimated: true,
+    exerciseStyle: estimateExerciseStyle(type),
+    exerciseStyleEstimated: true,
   };
 }

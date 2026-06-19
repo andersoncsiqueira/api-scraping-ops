@@ -17,6 +17,12 @@ import type {
   OptionQuote,
 } from "./optionTypes";
 
+const OPTION_CACHE_MINUTES = Number(process.env.OPTION_CACHE_MINUTES ?? 2);
+const YAHOO_FETCH_TIMEOUT_MS = Number(
+  process.env.OPTIONS_SCRAPER_TIMEOUT_MS ?? 8000
+);
+const pendingOptionLookups = new Map<string, Promise<OptionLookupResponse>>();
+
 type YahooChartResponse = {
   chart?: {
     result?: Array<{
@@ -109,6 +115,10 @@ function parseYahooOptionQuote(
     changePercent:
       changePercent !== null ? Number(changePercent.toFixed(2)) : null,
     volume: volume !== null ? Math.round(volume) : null,
+    financialVolume: null,
+    trades: null,
+    bid: null,
+    ask: null,
     updatedAt: timestamp
       ? new Date(timestamp * 1000).toISOString()
       : new Date().toISOString(),
@@ -124,23 +134,31 @@ async function fetchYahooOptionQuote(
     yahooSymbol
   )}?range=5d&interval=1d`;
 
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      Accept: "application/json",
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), YAHOO_FETCH_TIMEOUT_MS);
 
-  if (!response.ok) {
-    return null;
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as YahooChartResponse;
+
+    return parseYahooOptionQuote(yahooSymbol, data);
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const data = (await response.json()) as YahooChartResponse;
-
-  return parseYahooOptionQuote(yahooSymbol, data);
 }
 
-export async function getOptionBySymbol(
+async function resolveOptionBySymbol(
   optionSymbol: string
 ): Promise<OptionLookupResponse> {
   const cleanSymbol = optionSymbol.trim().toUpperCase();
@@ -148,34 +166,36 @@ export async function getOptionBySymbol(
   const cacheFileName = `option_${cleanSymbol}.json`;
 
   const cached = await readJsonCache<OptionLookupResponse>(cacheFileName);
+  const parsed = parseBrazilianOptionCode(cleanSymbol);
 
-  if (cached && isCacheFresh(cached.updatedAt, 15)) {
+  if (cached && isCacheFresh(cached.updatedAt, OPTION_CACHE_MINUTES)) {
     return {
       ...cached,
+      exerciseStyle: cached.exerciseStyle ?? parsed.exerciseStyle,
+      exerciseStyleEstimated:
+        cached.exerciseStyleEstimated ?? parsed.exerciseStyleEstimated,
       warnings: [...cached.warnings, "Resposta carregada do cache local."],
     };
   }
 
-  const parsed = parseBrazilianOptionCode(cleanSymbol);
-
   const warnings: string[] = [];
 
   try {
-  const scraped = await scrapeOptionFromOpcoesNet(cleanSymbol, parsed);
+    const scraped = await scrapeOptionFromOpcoesNet(cleanSymbol, parsed);
 
-  if (scraped && (scraped.strike !== null || scraped.quote !== null)) {
-    const result = mergeScrapedOptionWithLookup(parsed, scraped);
+    if (scraped && (scraped.strike !== null || scraped.quote !== null)) {
+      const result = mergeScrapedOptionWithLookup(parsed, scraped);
 
-    await writeJsonCache(cacheFileName, result);
+      await writeJsonCache(cacheFileName, result);
 
-    return result;
+      return result;
+    }
+
+    warnings.push("Opções.Net foi consultado, mas retornou dados incompletos.");
+  } catch (error) {
+    console.error("Erro no scraper Opções.Net:", error);
+    warnings.push("Erro ao tentar buscar dados no Opções.Net.");
   }
-
-  warnings.push("Opções.Net foi consultado, mas retornou dados incompletos.");
-} catch (error) {
-  console.error("Erro no scraper Opções.Net:", error);
-  warnings.push("Erro ao tentar buscar dados no Opções.Net.");
-}
 
   const optionFromChain = await findOptionInChain(
     parsed.symbol,
@@ -195,6 +215,10 @@ export async function getOptionBySymbol(
       change: null,
       changePercent: null,
       volume: optionFromChain.volume,
+      financialVolume: optionFromChain.financialVolume,
+      trades: optionFromChain.trades,
+      bid: optionFromChain.bid,
+      ask: optionFromChain.ask,
       updatedAt: optionFromChain.updatedAt,
     };
   }
@@ -239,6 +263,9 @@ export async function getOptionBySymbol(
     codeNumber: parsed.codeNumber,
     expiration: optionFromChain?.expiration ?? parsed.estimatedExpiration,
     expirationEstimated: optionFromChain ? false : parsed.expirationEstimated,
+    exerciseStyle: optionFromChain?.exerciseStyle ?? parsed.exerciseStyle,
+    exerciseStyleEstimated:
+      optionFromChain?.exerciseStyleEstimated ?? parsed.exerciseStyleEstimated,
     strike: optionFromChain?.strike ?? null,
     quote,
     source: optionFromChain ? "manual" : quote ? "Yahoo Finance" : "parser",
@@ -249,4 +276,23 @@ export async function getOptionBySymbol(
   await writeJsonCache(cacheFileName, result);
 
   return result;
+}
+
+export async function getOptionBySymbol(
+  optionSymbol: string
+): Promise<OptionLookupResponse> {
+  const cleanSymbol = optionSymbol.trim().toUpperCase();
+  const pending = pendingOptionLookups.get(cleanSymbol);
+
+  if (pending) {
+    return pending;
+  }
+
+  const lookup = resolveOptionBySymbol(cleanSymbol).finally(() => {
+    pendingOptionLookups.delete(cleanSymbol);
+  });
+
+  pendingOptionLookups.set(cleanSymbol, lookup);
+
+  return lookup;
 }

@@ -1,4 +1,4 @@
-import type { OptionType } from "./optionTypes";
+import type { OptionExerciseStyle, OptionType } from "./optionTypes";
 
 export type OptionChainSource = "manual" | "scraper" | "cache" | "Opções.Net";
 
@@ -7,11 +7,15 @@ export type OptionChainItem = {
   underlying: string;
   type: OptionType;
   expiration: string;
+  exerciseStyle: OptionExerciseStyle;
+  exerciseStyleEstimated: boolean;
   strike: number;
   lastPrice: number | null;
   bid: number | null;
   ask: number | null;
   volume: number | null;
+  financialVolume: number | null;
+  trades: number | null;
   openInterest: number | null;
   updatedAt: string;
 };

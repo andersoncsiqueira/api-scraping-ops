@@ -11,12 +11,15 @@ import type {
   OptionChainItem,
   OptionsChainResponse,
 } from "./optionsChainTypes";
+import type { OptionExerciseStyle } from "./optionTypes";
 
 type OptionKind = "CALL" | "PUT";
 
 const SOURCE_NAME = "Opções.Net";
-const CACHE_MINUTES = 30;
+const CACHE_MINUTES = Number(process.env.OPTIONS_CHAIN_CACHE_MINUTES ?? 5);
+const FETCH_TIMEOUT_MS = Number(process.env.OPTIONS_SCRAPER_TIMEOUT_MS ?? 8000);
 const MINIMUM_VALID_CHAIN_SIZE = 10;
+const pendingChainLookups = new Map<string, Promise<OptionsChainResponse>>();
 
 function normalizeUnderlying(underlying: string): string {
   return underlying.trim().toUpperCase();
@@ -91,6 +94,10 @@ function isPossibleStrike(value: number | null): value is number {
   return value !== null && value > 0 && value < 1_000_000;
 }
 
+function estimateExerciseStyle(type: OptionKind): OptionExerciseStyle {
+  return type === "CALL" ? "AMERICAN" : "EUROPEAN";
+}
+
 function getOptionSymbolPattern(underlying: string): RegExp {
   const root = getUnderlyingRoot(underlying);
 
@@ -157,11 +164,15 @@ function buildItem(params: {
     underlying: params.underlying,
     type: params.type,
     expiration: params.expiration,
+    exerciseStyle: estimateExerciseStyle(params.type),
+    exerciseStyleEstimated: true,
     strike: params.strike,
     lastPrice: null,
     bid: null,
     ask: null,
     volume: null,
+    financialVolume: null,
+    trades: null,
     openInterest: null,
     updatedAt: params.updatedAt,
   };
@@ -468,30 +479,38 @@ function parseMatrixPage(params: {
 }
 
 async function fetchHtml(url: string): Promise<string> {
-  const response = await fetch(url, {
-    headers: {
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.7",
-      "Cache-Control": "no-cache",
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36",
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  if (!response.ok) {
-    throw new Error(
-      `Opções.Net respondeu ${response.status} ao acessar ${url}.`
-    );
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Opções.Net respondeu ${response.status} ao acessar ${url}.`
+      );
+    }
+
+    const html = await response.text();
+
+    if (!html || html.length < 500) {
+      throw new Error(`Resposta vazia ou incompleta recebida de ${url}.`);
+    }
+
+    return html;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const html = await response.text();
-
-  if (!html || html.length < 500) {
-    throw new Error(`Resposta vazia ou incompleta recebida de ${url}.`);
-  }
-
-  return html;
 }
 
 async function scrapeOptionsChain(
@@ -560,7 +579,20 @@ function isUsefulCache(
   );
 }
 
-export async function getOptionsChain(
+function hydrateCachedChain(
+  chain: OptionsChainResponse
+): OptionsChainResponse {
+  return {
+    ...chain,
+    options: chain.options.map((option) => ({
+      ...option,
+      exerciseStyle: option.exerciseStyle ?? estimateExerciseStyle(option.type),
+      exerciseStyleEstimated: option.exerciseStyleEstimated ?? true,
+    })),
+  };
+}
+
+async function resolveOptionsChain(
   underlying: string
 ): Promise<OptionsChainResponse> {
   const cleanUnderlying = normalizeUnderlying(underlying);
@@ -583,7 +615,7 @@ export async function getOptionsChain(
     isCacheFresh(cached.updatedAt, CACHE_MINUTES)
   ) {
     return {
-      ...cached,
+      ...hydrateCachedChain(cached),
       source: "cache" as OptionsChainResponse["source"],
       cached: true,
     };
@@ -616,7 +648,7 @@ export async function getOptionsChain(
     */
     if (isUsefulCache(cached)) {
       return {
-        ...cached,
+        ...hydrateCachedChain(cached),
         source: "cache" as OptionsChainResponse["source"],
         cached: true,
       };
@@ -624,6 +656,25 @@ export async function getOptionsChain(
 
     throw error;
   }
+}
+
+export async function getOptionsChain(
+  underlying: string
+): Promise<OptionsChainResponse> {
+  const cleanUnderlying = normalizeUnderlying(underlying);
+  const pending = pendingChainLookups.get(cleanUnderlying);
+
+  if (pending) {
+    return pending;
+  }
+
+  const lookup = resolveOptionsChain(cleanUnderlying).finally(() => {
+    pendingChainLookups.delete(cleanUnderlying);
+  });
+
+  pendingChainLookups.set(cleanUnderlying, lookup);
+
+  return lookup;
 }
 
 export async function findOptionInChain(
