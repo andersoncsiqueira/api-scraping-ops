@@ -1,4 +1,4 @@
-import type { OptionType } from "./optionTypes";
+import type { OptionExerciseStyle, OptionType } from "./optionTypes";
 
 export type OptionChainSource =
   | "manual"
@@ -12,6 +12,8 @@ export type OptionChainItem = {
   underlying: string;
   type: OptionType;
   expiration: string;
+  exerciseStyle: OptionExerciseStyle;
+  exerciseStyleEstimated: boolean;
   strike: number;
   lastPrice: number | null;
   bid: number | null;

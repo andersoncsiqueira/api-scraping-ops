@@ -12,6 +12,7 @@ import type {
   OptionChainItem,
   OptionsChainResponse,
 } from "./optionsChainTypes";
+import type { OptionExerciseStyle } from "./optionTypes";
 
 type OptionKind = "CALL" | "PUT";
 type BrapiOptionSide = "call" | "put";
@@ -142,6 +143,10 @@ function isPossibleStrike(value: number | null): value is number {
   return value !== null && value > 0 && value < 1_000_000;
 }
 
+function estimateExerciseStyle(type: OptionKind): OptionExerciseStyle {
+  return type === "CALL" ? "AMERICAN" : "EUROPEAN";
+}
+
 function getOptionSymbolPattern(underlying: string): RegExp {
   const root = getUnderlyingRoot(underlying);
 
@@ -208,6 +213,8 @@ function buildItem(params: {
     underlying: params.underlying,
     type: params.type,
     expiration: params.expiration,
+    exerciseStyle: estimateExerciseStyle(params.type),
+    exerciseStyleEstimated: true,
     strike: params.strike,
     lastPrice: null,
     bid: null,
@@ -520,124 +527,6 @@ function parseMatrixPage(params: {
   return parseMatrixTextFallback(params);
 }
 
-function parseBrapiOptionItem(
-  item: NonNullable<BrapiOptionsChainResponse["series"]>[number],
-  underlying: string,
-  fallbackExpiration: string | undefined,
-  fallbackDate: string | number | undefined
-): OptionChainItem | null {
-  const symbol = item.symbol?.trim().toUpperCase();
-  const type = item.side === "call" ? "CALL" : item.side === "put" ? "PUT" : null;
-  const strike = item.strike;
-  const expiration = item.expirationDate ?? fallbackExpiration;
-
-  if (
-    !symbol ||
-    !type ||
-    strike === null ||
-    strike === undefined ||
-    !expiration
-  ) {
-    return null;
-  }
-
-  return {
-    symbol,
-    underlying: item.underlyingSymbol?.trim().toUpperCase() ?? underlying,
-    type,
-    expiration,
-    strike,
-    lastPrice: item.close ?? null,
-    bid: item.bid ?? null,
-    ask: item.ask ?? null,
-    volume: item.volume !== null && item.volume !== undefined
-      ? Math.round(item.volume)
-      : null,
-    financialVolume:
-      item.financialVolume !== null && item.financialVolume !== undefined
-        ? Math.round(item.financialVolume)
-        : null,
-    trades: item.trades !== null && item.trades !== undefined
-      ? Math.round(item.trades)
-      : null,
-    openInterest: null,
-    updatedAt: brapiDateToIso(item.date ?? fallbackDate),
-  };
-}
-
-async function fetchBrapiOptionsChainForExpiration(
-  underlying: string,
-  expirationDate: string
-): Promise<OptionChainItem[]> {
-  const response = await fetchBrapiJson<BrapiOptionsChainResponse>(
-    "/options/chain",
-    {
-      underlying,
-      expirationDate,
-    }
-  );
-
-  return (response.series ?? [])
-    .map((item) =>
-      parseBrapiOptionItem(
-        item,
-        underlying,
-        response.expirationDate ?? expirationDate,
-        response.date
-      )
-    )
-    .filter((item): item is OptionChainItem => item !== null);
-}
-
-async function scrapeBrapiOptionsChain(
-  underlying: string
-): Promise<OptionChainItem[]> {
-  const cleanUnderlying = normalizeUnderlying(underlying);
-  const expirationsResponse =
-    await fetchBrapiJson<BrapiOptionsExpirationsResponse>(
-      "/options/expirations",
-      {
-        underlying: cleanUnderlying,
-      }
-    );
-
-  const expirations = (expirationsResponse.expirations ?? [])
-    .filter((expiration) => /^\d{4}-\d{2}-\d{2}$/.test(expiration))
-    .slice(0, BRAPI_OPTIONS_MAX_EXPIRATIONS);
-
-  if (expirations.length === 0) {
-    return [];
-  }
-
-  const chainByExpiration = await Promise.all(
-    expirations.map((expiration) =>
-      fetchBrapiOptionsChainForExpiration(cleanUnderlying, expiration)
-    )
-  );
-
-  const uniqueOptions = new Map<string, OptionChainItem>();
-
-  for (const option of chainByExpiration.flat()) {
-    uniqueOptions.set(option.symbol, option);
-  }
-
-  return Array.from(uniqueOptions.values()).sort((a, b) => {
-    const expirationCompare = a.expiration.localeCompare(b.expiration);
-
-    if (expirationCompare !== 0) {
-      return expirationCompare;
-    }
-
-    const strikeCompare = a.strike - b.strike;
-
-    if (strikeCompare !== 0) {
-      return strikeCompare;
-    }
-
-    return a.symbol.localeCompare(b.symbol);
-  });
-}
-
 async function fetchHtml(url: string): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -739,6 +628,19 @@ function isUsefulCache(
   );
 }
 
+function hydrateCachedChain(
+  chain: OptionsChainResponse
+): OptionsChainResponse {
+  return {
+    ...chain,
+    options: chain.options.map((option) => ({
+      ...option,
+      exerciseStyle: option.exerciseStyle ?? estimateExerciseStyle(option.type),
+      exerciseStyleEstimated: option.exerciseStyleEstimated ?? true,
+    })),
+  };
+}
+
 async function resolveOptionsChain(
   underlying: string
 ): Promise<OptionsChainResponse> {
@@ -762,7 +664,7 @@ async function resolveOptionsChain(
     isCacheFresh(cached.updatedAt, CACHE_MINUTES)
   ) {
     return {
-      ...cached,
+      ...hydrateCachedChain(cached),
       source: "cache" as OptionsChainResponse["source"],
       cached: true,
     };
@@ -815,7 +717,7 @@ async function resolveOptionsChain(
     */
     if (isUsefulCache(cached)) {
       return {
-        ...cached,
+        ...hydrateCachedChain(cached),
         source: "cache" as OptionsChainResponse["source"],
         cached: true,
       };

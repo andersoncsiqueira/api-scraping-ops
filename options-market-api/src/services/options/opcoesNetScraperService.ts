@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 
 import type {
   OptionLookupResponse,
+  OptionExerciseStyle,
   OptionQuote,
   OptionType,
   ParsedOptionCode,
@@ -14,6 +15,8 @@ type ScrapedOptionData = {
   underlying: string;
   type: OptionType;
   expiration: string;
+  exerciseStyle: OptionExerciseStyle;
+  exerciseStyleEstimated: boolean;
   strike: number | null;
   quote: OptionQuote | null;
   source: "Opções.Net";
@@ -89,13 +92,36 @@ function detectOptionType(text: string): OptionType | null {
   return null;
 }
 
+function detectExerciseStyle(text: string): OptionExerciseStyle | null {
+  const normalized = normalizeText(text)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+
+  if (/\bAMERICANA?\b/.test(normalized)) {
+    return "AMERICAN";
+  }
+
+  if (/\bEUROPEIA?\b/.test(normalized)) {
+    return "EUROPEAN";
+  }
+
+  return null;
+}
+
 function parseHeaderData(
   optionSymbol: string,
   text: string,
   parsedFallback: ParsedOptionCode
 ): Pick<
   ScrapedOptionData,
-  "symbol" | "underlying" | "type" | "expiration" | "strike"
+  | "symbol"
+  | "underlying"
+  | "type"
+  | "expiration"
+  | "exerciseStyle"
+  | "exerciseStyleEstimated"
+  | "strike"
 > {
   const normalized = normalizeText(text);
 
@@ -120,11 +146,16 @@ function parseHeaderData(
   const expiration =
     brDateToIso(expirationMatch?.[1]) ?? parsedFallback.estimatedExpiration;
 
+  const detectedExerciseStyle = detectExerciseStyle(normalized);
+  const exerciseStyle = detectedExerciseStyle ?? parsedFallback.exerciseStyle;
+
   return {
     symbol,
     underlying,
     type,
     expiration,
+    exerciseStyle,
+    exerciseStyleEstimated: detectedExerciseStyle === null,
     strike,
   };
 }
@@ -389,6 +420,8 @@ export function mergeScrapedOptionWithLookup(
     codeNumber: parsed.codeNumber,
     expiration: scraped.expiration,
     expirationEstimated: false,
+    exerciseStyle: scraped.exerciseStyle,
+    exerciseStyleEstimated: scraped.exerciseStyleEstimated,
     strike: scraped.strike,
     quote: scraped.quote,
     source: "Opções.Net",
