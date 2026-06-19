@@ -197,20 +197,6 @@ async function resolveOptionBySymbol(
     warnings.push("Erro ao tentar buscar dados no Opções.Net.");
   }
 
-    if (scraped && (scraped.strike !== null || scraped.quote !== null)) {
-      const result = mergeScrapedOptionWithLookup(parsed, scraped);
-
-      await writeJsonCache(cacheFileName, result);
-
-      return result;
-    }
-
-    warnings.push("Opções.Net foi consultado, mas retornou dados incompletos.");
-  } catch (error) {
-    console.error("Erro no scraper Opções.Net:", error);
-    warnings.push("Erro ao tentar buscar dados no Opções.Net.");
-  }
-
   let optionFromChain = null;
 
   try {
