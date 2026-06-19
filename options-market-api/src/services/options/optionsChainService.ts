@@ -553,6 +553,8 @@ function parseBrapiOptionItem(
     underlying: item.underlyingSymbol?.trim().toUpperCase() ?? underlying,
     type,
     expiration,
+    exerciseStyle: estimateExerciseStyle(type),
+    exerciseStyleEstimated: true,
     strike,
     lastPrice: item.close ?? null,
     bid: item.bid ?? null,
@@ -752,6 +754,8 @@ function hasAnyCachedOptions(
   return Boolean(
     cached && Array.isArray(cached.options) && cached.options.length > 0
   );
+}
+
 function hydrateCachedChain(
   chain: OptionsChainResponse
 ): OptionsChainResponse {
