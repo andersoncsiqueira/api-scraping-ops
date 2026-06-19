@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import marketDataRoutes from "./routes/marketDataRoutes";
 import optionsRoutes from "./routes/optionsRoutes";
 import optionsChainRoutes from "./routes/optionsChainRoutes";
+import themeRoutes from "./routes/themeRoutes";
 
 dotenv.config();
 
@@ -26,6 +27,7 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/market-data", marketDataRoutes);
 app.use("/api/options", optionsRoutes);
 app.use("/api/options-chain", optionsChainRoutes);
+app.use("/api/theme", themeRoutes);
 
 app.listen(PORT, () => {
   console.log(`Options Market API rodando na porta ${PORT}`);
